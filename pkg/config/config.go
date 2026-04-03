@@ -317,6 +317,28 @@ func (d *AgentDefaults) GetModelName() string {
 	return d.ModelName
 }
 
+type ChannelsConfig struct {
+	WhatsApp            WhatsAppConfig            `json:"whatsapp"             yaml:"-"`
+	Telegram            TelegramConfig            `json:"telegram"             yaml:"telegram,omitempty"`
+	Feishu              FeishuConfig              `json:"feishu"               yaml:"feishu,omitempty"`
+	Discord             DiscordConfig             `json:"discord"              yaml:"discord,omitempty"`
+	MaixCam             MaixCamConfig             `json:"maixcam"              yaml:"-"`
+	QQ                  QQConfig                  `json:"qq"                   yaml:"qq,omitempty"`
+	DingTalk            DingTalkConfig            `json:"dingtalk"             yaml:"dingtalk,omitempty"`
+	Slack               SlackConfig               `json:"slack"                yaml:"slack,omitempty"`
+	Matrix              MatrixConfig              `json:"matrix"               yaml:"matrix,omitempty"`
+	LINE                LINEConfig                `json:"line"                 yaml:"line,omitempty"`
+	OneBot              OneBotConfig              `json:"onebot"               yaml:"onebot,omitempty"`
+	WeCom               WeComConfig               `json:"wecom"                yaml:"wecom,omitempty"                envPrefix:"PICOCLAW_CHANNELS_WECOM_"`
+	Weixin              WeixinConfig              `json:"weixin"               yaml:"weixin,omitempty"`
+	Pico                PicoConfig                `json:"pico"                 yaml:"pico,omitempty"`
+	PicoClient          PicoClientConfig          `json:"pico_client"          yaml:"pico_client,omitempty"`
+	IRC                 IRCConfig                 `json:"irc"                  yaml:"irc,omitempty"`
+	VK                  VKConfig                  `json:"vk"                   yaml:"vk,omitempty"`
+	TeamsWebhook        TeamsWebhookConfig        `json:"teams_webhook"        yaml:"teams_webhook,omitempty"`
+	GrafanaAlertmanager GrafanaAlertmanagerConfig `json:"grafana_alertmanager" yaml:"grafana_alertmanager,omitempty"`
+}
+
 // GroupTriggerConfig controls when the bot responds in group chats.
 type GroupTriggerConfig struct {
 	MentionOnly bool     `json:"mention_only,omitempty"`
@@ -525,6 +547,15 @@ type MQTTSettings struct {
 	ClientID    string       `json:"client_id,omitempty"    yaml:"-"                  env:"PICOCLAW_CHANNELS_MQTT_CLIENT_ID"`
 	KeepAlive   int          `json:"keep_alive,omitempty"   yaml:"-"                  env:"PICOCLAW_CHANNELS_MQTT_KEEP_ALIVE"`
 	QoS         int          `json:"qos,omitempty"          yaml:"-"                  env:"PICOCLAW_CHANNELS_MQTT_QOS"`
+}
+
+// GrafanaAlertmanagerSettings configures the Grafana Alertmanager webhook channel.
+// This channel exposes a webhook endpoint that receives alerts from Grafana Alertmanager.
+type GrafanaAlertmanagerSettings struct {
+	WebhookPath  string              `json:"webhook_path"    yaml:"-"                env:"PICOCLAW_CHANNELS_GRAFANA_ALERTMANAGER_WEBHOOK_PATH"`
+	Secret       SecureString        `json:"secret,omitzero" yaml:"secret,omitempty" env:"PICOCLAW_CHANNELS_GRAFANA_ALERTMANAGER_SECRET"`
+	ChatID       string              `json:"chat_id"         yaml:"-"                env:"PICOCLAW_CHANNELS_GRAFANA_ALERTMANAGER_CHAT_ID"`
+	ForcedSkills []string            `json:"forced_skills"   yaml:"-"                env:"PICOCLAW_CHANNELS_GRAFANA_ALERTMANAGER_FORCED_SKILLS"`
 }
 
 type HeartbeatConfig struct {

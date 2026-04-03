@@ -32,8 +32,9 @@ const (
 	ChannelMaixCam        = "maixcam"
 	ChannelWhatsApp       = "whatsapp"
 	ChannelWhatsAppNative = "whatsapp_native"
-	ChannelTeamsWebHook   = "teams_webhook"
-	ChannelMQTT           = "mqtt"
+	ChannelTeamsWebHook        = "teams_webhook"
+	ChannelMQTT                = "mqtt"
+	ChannelGrafanaAlertmanager = "grafana_alertmanager"
 )
 
 func initChannel() {
@@ -640,8 +641,9 @@ var channelSettingsFactory = map[string]any{
 	ChannelMaixCam:        (MaixCamSettings{}),
 	ChannelWhatsApp:       (WhatsAppSettings{}),
 	ChannelWhatsAppNative: (WhatsAppSettings{}),
-	ChannelTeamsWebHook:   (TeamsWebhookSettings{}),
-	ChannelMQTT:           (MQTTSettings{}),
+	ChannelTeamsWebHook:        (TeamsWebhookSettings{}),
+	ChannelMQTT:                (MQTTSettings{}),
+	ChannelGrafanaAlertmanager: (GrafanaAlertmanagerSettings{}),
 }
 
 // newChannelSettings creates a fresh zero-value pointer for the given channel type.
