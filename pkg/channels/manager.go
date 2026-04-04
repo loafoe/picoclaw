@@ -708,37 +708,54 @@ func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) 
 			if !ok {
 				return
 			}
-			maxLen := 0
-			if mlp, ok := w.ch.(MessageLengthProvider); ok {
-				maxLen = mlp.MaxMessageLength()
-			}
-
-			// Collect all message chunks to send
-			var chunks []string
-
-			// Step 1: Try marker-based splitting if enabled
-			if m.config != nil && m.config.Agents.Defaults.SplitOnMarker {
-				if markerChunks := SplitByMarker(msg.Content); len(markerChunks) > 1 {
-					for _, chunk := range markerChunks {
-						chunks = append(chunks, splitByLength(chunk, maxLen)...)
-					}
-				}
-			}
-
-			// Step 2: Fallback to length-based splitting if no chunks from marker
-			if len(chunks) == 0 {
-				chunks = splitByLength(msg.Content, maxLen)
-			}
-
-			// Step 3: Send all chunks
-			for _, chunk := range chunks {
-				chunkMsg := msg
-				chunkMsg.Content = chunk
-				m.sendWithRetry(ctx, name, w, chunkMsg)
-			}
+			m.processMessage(ctx, name, w, msg)
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+// processMessage handles a single outbound message with panic recovery.
+// This prevents a panic in a channel's Send() from crashing the entire gateway.
+func (m *Manager) processMessage(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.RecoverPanicNoExit(r)
+			logger.ErrorCF("channels", "Panic in channel worker, message dropped", map[string]any{
+				"channel": name,
+				"chat_id": msg.ChatID,
+				"panic":   fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	maxLen := 0
+	if mlp, ok := w.ch.(MessageLengthProvider); ok {
+		maxLen = mlp.MaxMessageLength()
+	}
+
+	// Collect all message chunks to send
+	var chunks []string
+
+	// Step 1: Try marker-based splitting if enabled
+	if m.config != nil && m.config.Agents.Defaults.SplitOnMarker {
+		if markerChunks := SplitByMarker(msg.Content); len(markerChunks) > 1 {
+			for _, chunk := range markerChunks {
+				chunks = append(chunks, splitByLength(chunk, maxLen)...)
+			}
+		}
+	}
+
+	// Step 2: Fallback to length-based splitting if no chunks from marker
+	if len(chunks) == 0 {
+		chunks = splitByLength(msg.Content, maxLen)
+	}
+
+	// Step 3: Send all chunks
+	for _, chunk := range chunks {
+		chunkMsg := msg
+		chunkMsg.Content = chunk
+		m.sendWithRetry(ctx, name, w, chunkMsg)
 	}
 }
 

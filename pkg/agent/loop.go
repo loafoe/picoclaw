@@ -479,6 +479,18 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 			// Process message
 			func() {
+				// Panic recovery to prevent crashes from bringing down the entire agent loop
+				defer func() {
+					if r := recover(); r != nil {
+						logger.RecoverPanicNoExit(r)
+						logger.ErrorCF("agent", "Panic during message processing, message dropped", map[string]any{
+							"channel":  msg.Channel,
+							"chat_id":  msg.ChatID,
+							"sender":   msg.SenderID,
+							"panic":    fmt.Sprintf("%v", r),
+						})
+					}
+				}()
 				defer func() {
 					if al.channelManager != nil {
 						al.channelManager.InvokeTypingStop(msg.Channel, msg.ChatID)
