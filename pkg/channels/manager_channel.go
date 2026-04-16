@@ -107,7 +107,7 @@ func hiddenValues(key string, value map[string]any, ch *config.Channel) {
 			value["username"] = settings.Username.String()
 			value["password"] = settings.Password.String()
 		}
-	case "grafana_alertmanager":
+	case config.ChannelGrafanaAlertmanager:
 		if settings, ok := v.(*config.GrafanaAlertmanagerSettings); ok {
 			value["secret"] = settings.Secret.String()
 		}

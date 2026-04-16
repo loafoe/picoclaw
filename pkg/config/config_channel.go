@@ -32,7 +32,7 @@ const (
 	ChannelMaixCam        = "maixcam"
 	ChannelWhatsApp       = "whatsapp"
 	ChannelWhatsAppNative = "whatsapp_native"
-	ChannelTeamsWebHook        = "teams_webhook"
+	ChannelTeamsWebHook   = "teams_webhook"
 	ChannelMQTT                = "mqtt"
 	ChannelGrafanaAlertmanager = "grafana_alertmanager"
 )
@@ -641,7 +641,7 @@ var channelSettingsFactory = map[string]any{
 	ChannelMaixCam:        (MaixCamSettings{}),
 	ChannelWhatsApp:       (WhatsAppSettings{}),
 	ChannelWhatsAppNative: (WhatsAppSettings{}),
-	ChannelTeamsWebHook:        (TeamsWebhookSettings{}),
+	ChannelTeamsWebHook:   (TeamsWebhookSettings{}),
 	ChannelMQTT:                (MQTTSettings{}),
 	ChannelGrafanaAlertmanager: (GrafanaAlertmanagerSettings{}),
 }

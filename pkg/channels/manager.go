@@ -719,10 +719,6 @@ func (m *Manager) initChannels(channels *config.ChannelsConfig) error {
 		m.initChannel(typeName, name)
 	}
 
-	if channels.GrafanaAlertmanager.Enabled {
-		m.initChannel("grafana_alertmanager", "Grafana Alertmanager")
-	}
-
 	logger.InfoCF("channels", "Channel initialization completed", map[string]any{
 		"enabled_channels": len(m.channels),
 	})

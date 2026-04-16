@@ -60,7 +60,8 @@ type WebhookPayload struct {
 // GrafanaAlertmanagerChannel implements a webhook endpoint for Grafana Alertmanager.
 type GrafanaAlertmanagerChannel struct {
 	*channels.BaseChannel
-	config config.GrafanaAlertmanagerConfig
+	bc     *config.Channel
+	config *config.GrafanaAlertmanagerConfig
 }
 
 // NewGrafanaAlertmanagerChannel creates a new Grafana Alertmanager channel.
@@ -68,7 +69,8 @@ type GrafanaAlertmanagerChannel struct {
 // since allow_from cannot meaningfully restrict webhook callers (the senderID
 // is always "grafana-alertmanager"). Use secret for authentication instead.
 func NewGrafanaAlertmanagerChannel(
-	cfg config.GrafanaAlertmanagerConfig,
+	bc *config.Channel,
+	cfg *config.GrafanaAlertmanagerConfig,
 	messageBus *bus.MessageBus,
 ) (*GrafanaAlertmanagerChannel, error) {
 	// Validate: if allow_from is restrictive, secret must be configured
@@ -80,10 +82,11 @@ func NewGrafanaAlertmanagerChannel(
 		)
 	}
 
-	base := channels.NewBaseChannel("grafana_alertmanager", cfg, messageBus, cfg.AllowFrom)
+	base := channels.NewBaseChannel(config.ChannelGrafanaAlertmanager, bc, messageBus, cfg.AllowFrom)
 
 	return &GrafanaAlertmanagerChannel{
 		BaseChannel: base,
+		bc:          bc,
 		config:      cfg,
 	}, nil
 }
@@ -191,16 +194,22 @@ func (c *GrafanaAlertmanagerChannel) ServeHTTP(w http.ResponseWriter, r *http.Re
 	// Use receiver as sender ID
 	senderID := "grafana-alertmanager"
 
+	// Build inbound context
+	inboundCtx := bus.InboundContext{
+		Channel:   c.Name(),
+		ChatID:    chatID,
+		SenderID:  senderID,
+		MessageID: payload.GroupKey,
+		ChatType:  "webhook",
+	}
+
 	// Publish the inbound message
-	c.HandleMessage(
+	c.HandleMessageWithContext(
 		r.Context(),
-		bus.Peer{Kind: "webhook", ID: payload.Receiver},
-		payload.GroupKey, // messageID
-		senderID,
 		chatID,
 		content,
 		nil, // no media
-		nil, // no metadata
+		inboundCtx,
 	)
 
 	w.WriteHeader(http.StatusOK)

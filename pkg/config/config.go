@@ -317,28 +317,6 @@ func (d *AgentDefaults) GetModelName() string {
 	return d.ModelName
 }
 
-type ChannelsConfig struct {
-	WhatsApp            WhatsAppConfig            `json:"whatsapp"             yaml:"-"`
-	Telegram            TelegramConfig            `json:"telegram"             yaml:"telegram,omitempty"`
-	Feishu              FeishuConfig              `json:"feishu"               yaml:"feishu,omitempty"`
-	Discord             DiscordConfig             `json:"discord"              yaml:"discord,omitempty"`
-	MaixCam             MaixCamConfig             `json:"maixcam"              yaml:"-"`
-	QQ                  QQConfig                  `json:"qq"                   yaml:"qq,omitempty"`
-	DingTalk            DingTalkConfig            `json:"dingtalk"             yaml:"dingtalk,omitempty"`
-	Slack               SlackConfig               `json:"slack"                yaml:"slack,omitempty"`
-	Matrix              MatrixConfig              `json:"matrix"               yaml:"matrix,omitempty"`
-	LINE                LINEConfig                `json:"line"                 yaml:"line,omitempty"`
-	OneBot              OneBotConfig              `json:"onebot"               yaml:"onebot,omitempty"`
-	WeCom               WeComConfig               `json:"wecom"                yaml:"wecom,omitempty"                envPrefix:"PICOCLAW_CHANNELS_WECOM_"`
-	Weixin              WeixinConfig              `json:"weixin"               yaml:"weixin,omitempty"`
-	Pico                PicoConfig                `json:"pico"                 yaml:"pico,omitempty"`
-	PicoClient          PicoClientConfig          `json:"pico_client"          yaml:"pico_client,omitempty"`
-	IRC                 IRCConfig                 `json:"irc"                  yaml:"irc,omitempty"`
-	VK                  VKConfig                  `json:"vk"                   yaml:"vk,omitempty"`
-	TeamsWebhook        TeamsWebhookConfig        `json:"teams_webhook"        yaml:"teams_webhook,omitempty"`
-	GrafanaAlertmanager GrafanaAlertmanagerConfig `json:"grafana_alertmanager" yaml:"grafana_alertmanager,omitempty"`
-}
-
 // GroupTriggerConfig controls when the bot responds in group chats.
 type GroupTriggerConfig struct {
 	MentionOnly bool     `json:"mention_only,omitempty"`

@@ -14,6 +14,15 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
+// testChannel creates a GrafanaAlertmanagerChannel for testing with the given config.
+func testChannel(cfg *config.GrafanaAlertmanagerConfig, msgBus *bus.MessageBus) (*GrafanaAlertmanagerChannel, error) {
+	bc := &config.Channel{
+		Type:    config.ChannelGrafanaAlertmanager,
+		Enabled: true,
+	}
+	return NewGrafanaAlertmanagerChannel(bc, cfg, msgBus)
+}
+
 func TestNewGrafanaAlertmanagerChannel_RequiresSecretWhenAllowFromRestrictive(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -49,7 +58,7 @@ func TestNewGrafanaAlertmanagerChannel_RequiresSecretWhenAllowFromRestrictive(t 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := config.GrafanaAlertmanagerConfig{
+			cfg := &config.GrafanaAlertmanagerConfig{
 				Enabled:   true,
 				AllowFrom: tt.allowFrom,
 			}
@@ -58,7 +67,7 @@ func TestNewGrafanaAlertmanagerChannel_RequiresSecretWhenAllowFromRestrictive(t 
 			}
 			msgBus := bus.NewMessageBus()
 
-			_, err := NewGrafanaAlertmanagerChannel(cfg, msgBus)
+			_, err := testChannel(cfg, msgBus)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewGrafanaAlertmanagerChannel() error = %v, wantErr %v", err, tt.wantErr)
@@ -96,7 +105,7 @@ func TestWebhookRejectsOversizedBody(t *testing.T) {
 
 func TestWebhookAcceptsMaxBodySize(t *testing.T) {
 	ch := &GrafanaAlertmanagerChannel{
-		config: config.GrafanaAlertmanagerConfig{
+		config: &config.GrafanaAlertmanagerConfig{
 			Secret: *config.NewSecureString("testsecret"),
 		},
 	}
@@ -116,7 +125,7 @@ func TestWebhookAcceptsMaxBodySize(t *testing.T) {
 
 func TestWebhookRejectsMissingSignatureWhenSecretConfigured(t *testing.T) {
 	ch := &GrafanaAlertmanagerChannel{
-		config: config.GrafanaAlertmanagerConfig{
+		config: &config.GrafanaAlertmanagerConfig{
 			Secret: *config.NewSecureString("testsecret"),
 		},
 	}
@@ -134,7 +143,7 @@ func TestWebhookRejectsMissingSignatureWhenSecretConfigured(t *testing.T) {
 
 func TestWebhookRejectsInvalidSignature(t *testing.T) {
 	ch := &GrafanaAlertmanagerChannel{
-		config: config.GrafanaAlertmanagerConfig{
+		config: &config.GrafanaAlertmanagerConfig{
 			Secret: *config.NewSecureString("testsecret"),
 		},
 	}
@@ -153,7 +162,7 @@ func TestWebhookRejectsInvalidSignature(t *testing.T) {
 
 func TestWebhookRejectsInvalidJSON(t *testing.T) {
 	ch := &GrafanaAlertmanagerChannel{
-		config: config.GrafanaAlertmanagerConfig{}, // no secret, open access
+		config: &config.GrafanaAlertmanagerConfig{}, // no secret, open access
 	}
 
 	body := `{invalid json`
@@ -169,12 +178,12 @@ func TestWebhookRejectsInvalidJSON(t *testing.T) {
 
 func TestWebhookAcceptsValidPayloadWithoutSecret(t *testing.T) {
 	msgBus := bus.NewMessageBus()
-	cfg := config.GrafanaAlertmanagerConfig{
+	cfg := &config.GrafanaAlertmanagerConfig{
 		Enabled: true,
 		ChatID:  "test-chat",
 	}
 
-	ch, err := NewGrafanaAlertmanagerChannel(cfg, msgBus)
+	ch, err := testChannel(cfg, msgBus)
 	if err != nil {
 		t.Fatalf("failed to create channel: %v", err)
 	}
@@ -209,13 +218,13 @@ func TestWebhookAcceptsValidPayloadWithoutSecret(t *testing.T) {
 func TestWebhookAcceptsValidPayloadWithValidSignature(t *testing.T) {
 	secret := "testsecret123"
 	msgBus := bus.NewMessageBus()
-	cfg := config.GrafanaAlertmanagerConfig{
+	cfg := &config.GrafanaAlertmanagerConfig{
 		Enabled: true,
 		Secret:  *config.NewSecureString(secret),
 		ChatID:  "test-chat",
 	}
 
-	ch, err := NewGrafanaAlertmanagerChannel(cfg, msgBus)
+	ch, err := testChannel(cfg, msgBus)
 	if err != nil {
 		t.Fatalf("failed to create channel: %v", err)
 	}
@@ -241,13 +250,13 @@ func TestWebhookAcceptsValidPayloadWithValidSignature(t *testing.T) {
 func TestWebhookAcceptsSignatureWithSha256Prefix(t *testing.T) {
 	secret := "testsecret123"
 	msgBus := bus.NewMessageBus()
-	cfg := config.GrafanaAlertmanagerConfig{
+	cfg := &config.GrafanaAlertmanagerConfig{
 		Enabled: true,
 		Secret:  *config.NewSecureString(secret),
 		ChatID:  "test-chat",
 	}
 
-	ch, err := NewGrafanaAlertmanagerChannel(cfg, msgBus)
+	ch, err := testChannel(cfg, msgBus)
 	if err != nil {
 		t.Fatalf("failed to create channel: %v", err)
 	}
@@ -272,7 +281,7 @@ func TestWebhookAcceptsSignatureWithSha256Prefix(t *testing.T) {
 
 func TestVerifySignature(t *testing.T) {
 	ch := &GrafanaAlertmanagerChannel{
-		config: config.GrafanaAlertmanagerConfig{
+		config: &config.GrafanaAlertmanagerConfig{
 			Secret: *config.NewSecureString("mysecret"),
 		},
 	}
