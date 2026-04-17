@@ -509,11 +509,14 @@ func (al *AgentLoop) runAgentLoop(
 
 	result, err := al.runTurn(ctx, ts)
 	if err != nil {
+		if ts.getStreamer() != nil {
+			ts.cancelStreamer(ctx)
+		}
 		return "", err
 	}
 
-	// Handle streamer cleanup on abort
-	if ts.getStreamer() != nil && result.status == TurnEndStatusAborted {
+	// Handle streamer cleanup on abort or error
+	if ts.getStreamer() != nil && (result.status == TurnEndStatusAborted || result.status == TurnEndStatusError) {
 		ts.cancelStreamer(ctx)
 	}
 
@@ -531,7 +534,8 @@ func (al *AgentLoop) runAgentLoop(
 		}
 	}
 
-	if opts.SendResponse && result.finalContent != "" {
+	// Only publish via bus if not already streamed
+	if opts.SendResponse && result.finalContent != "" && ts.getStreamer() == nil {
 		agentID, sessionKey, scope := outboundTurnMetadata(
 			agent.ID,
 			opts.Dispatch.SessionKey,
