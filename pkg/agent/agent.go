@@ -560,11 +560,29 @@ func (al *AgentLoop) runAgentLoop(
 		newTurnContext(opts.Dispatch.InboundContext, opts.Dispatch.RouteResult, opts.Dispatch.SessionScope),
 	)
 	ts := newTurnState(agent, opts, turnScope)
+
+	// Acquire streamer if channel supports streaming
+	if al.bus != nil && opts.SendResponse {
+		if streamer, ok := al.bus.GetStreamer(ctx, opts.Dispatch.Channel(), opts.Dispatch.ChatID()); ok {
+			ts.setStreamer(streamer)
+			logger.DebugCF("agent", "Streaming enabled for turn", map[string]any{
+				"channel": opts.Dispatch.Channel(),
+				"chat_id": opts.Dispatch.ChatID(),
+			})
+		}
+	}
+
 	pipeline := NewPipeline(al)
 	result, err := al.runTurn(ctx, ts, pipeline)
 	if err != nil {
 		return "", err
 	}
+
+	// Handle streamer cleanup on abort
+	if ts.getStreamer() != nil && result.status == TurnEndStatusAborted {
+		ts.cancelStreamer(ctx)
+	}
+
 	if result.status == TurnEndStatusAborted {
 		return "", nil
 	}
