@@ -68,12 +68,15 @@ func (pc *picoConn) close() {
 
 // picoStreamer implements channels.Streamer for real-time token streaming.
 type picoStreamer struct {
-	channel   *PicoChannel
-	chatID    string
-	messageID string
-	content   string
-	mu        sync.Mutex
-	finalized bool
+	channel          *PicoChannel
+	chatID           string
+	messageID        string
+	content          string
+	mu               sync.Mutex
+	finalized        bool
+	lastUpdateAt     time.Time
+	throttleInterval time.Duration
+	minGrowth        int
 }
 
 func (s *picoStreamer) Update(ctx context.Context, content string) error {
@@ -82,7 +85,17 @@ func (s *picoStreamer) Update(ctx context.Context, content string) error {
 	if s.finalized {
 		return nil
 	}
+
+	now := time.Now()
+	growth := len(content) - len(s.content)
+
+	// Skip if not enough growth AND not enough time elapsed
+	if growth < s.minGrowth && time.Since(s.lastUpdateAt) < s.throttleInterval {
+		return nil
+	}
+
 	s.content = content
+	s.lastUpdateAt = now
 	return s.channel.EditMessage(ctx, s.chatID, s.messageID, content)
 }
 
@@ -373,9 +386,11 @@ func (c *PicoChannel) BeginStream(ctx context.Context, chatID string) (channels.
 	}
 
 	return &picoStreamer{
-		channel:   c,
-		chatID:    chatID,
-		messageID: msgID,
+		channel:          c,
+		chatID:           chatID,
+		messageID:        msgID,
+		throttleInterval: 100 * time.Millisecond,
+		minGrowth:        20,
 	}, nil
 }
 
