@@ -12,6 +12,8 @@ const (
 	// TypeMessageCreate is sent from server to client.
 	TypeMessageCreate = "message.create"
 	TypeMessageUpdate = "message.update"
+	TypeStreamDelta   = "stream.delta"
+	TypeStreamEnd     = "stream.end"
 	TypeMediaCreate   = "media.create"
 	TypeTypingStart   = "typing.start"
 	TypeTypingStop    = "typing.stop"
