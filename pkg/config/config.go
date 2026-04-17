@@ -454,6 +454,7 @@ type PicoSettings struct {
 	ReadTimeout     int          `json:"read_timeout,omitempty"      yaml:"-"`
 	WriteTimeout    int          `json:"write_timeout,omitempty"     yaml:"-"`
 	MaxConnections  int          `json:"max_connections,omitempty"   yaml:"-"`
+	Streaming       bool         `json:"streaming,omitempty"         yaml:"-"               env:"PICOCLAW_CHANNELS_PICO_STREAMING"`
 }
 
 // SetToken sets the Pico token and marks it as dirty for security saving
