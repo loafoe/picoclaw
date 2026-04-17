@@ -144,7 +144,7 @@ func (p *Pipeline) CallLLM(
 		})
 
 	// LLM call closure with fallback support
-	callLLM := func(messagesForCall []providers.Message, toolDefsForCall []providers.ToolDefinition) (*providers.LLMResponse, error) {
+	callLLM := func(messagesForCall []providers.Message, toolDefsForCall []providers.ToolDefinition, streamer bus.Streamer) (*providers.LLMResponse, error) {
 		providerCtx, providerCancel := context.WithCancel(turnCtx)
 		ts.setProviderCancel(providerCancel)
 		defer func() {
@@ -154,6 +154,19 @@ func (p *Pipeline) CallLLM(
 
 		al.activeRequests.Add(1)
 		defer al.activeRequests.Done()
+
+		// Use streaming if available and no tool calls expected
+		useStreaming := streamer != nil && len(toolDefsForCall) == 0
+		if sp, ok := exec.activeProvider.(providers.StreamingProvider); ok && useStreaming {
+			onChunk := func(accumulated string) {
+				if err := streamer.Update(providerCtx, accumulated); err != nil {
+					logger.DebugCF("agent", "Streaming update failed", map[string]any{
+						"error": err.Error(),
+					})
+				}
+			}
+			return sp.ChatStream(providerCtx, messagesForCall, toolDefsForCall, exec.llmModel, exec.llmOpts, onChunk)
+		}
 
 		if len(exec.activeCandidates) > 1 && p.Fallback != nil {
 			fbResult, fbErr := p.Fallback.Execute(
@@ -194,7 +207,12 @@ func (p *Pipeline) CallLLM(
 		backoffSecs = 2
 	}
 	for retry := 0; retry <= maxRetries; retry++ {
-		exec.response, err = callLLM(exec.callMessages, exec.providerToolDefs)
+		// Only stream on first attempt to avoid duplicate content
+		var callStreamer bus.Streamer
+		if retry == 0 {
+			callStreamer = ts.getStreamer()
+		}
+		exec.response, err = callLLM(exec.callMessages, exec.providerToolDefs, callStreamer)
 		if err == nil {
 			break
 		}
@@ -490,6 +508,10 @@ func (p *Pipeline) CallLLM(
 			return ControlContinue, nil
 		}
 		exec.finalContent = responseContent
+		// Finalize streaming if active
+		if ts.getStreamer() != nil && exec.finalContent != "" {
+			ts.finalizeStreamer(turnCtx, exec.finalContent)
+		}
 		logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
 			map[string]any{
 				"agent_id":      ts.agent.ID,
