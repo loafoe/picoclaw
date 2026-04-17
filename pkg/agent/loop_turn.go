@@ -354,7 +354,7 @@ turnLoop:
 				"tools_json":    formatToolsForLog(providerToolDefs),
 			})
 
-		callLLM := func(messagesForCall []providers.Message, toolDefsForCall []providers.ToolDefinition) (*providers.LLMResponse, error) {
+		callLLM := func(messagesForCall []providers.Message, toolDefsForCall []providers.ToolDefinition, streamer bus.Streamer) (*providers.LLMResponse, error) {
 			providerCtx, providerCancel := context.WithCancel(turnCtx)
 			ts.setProviderCancel(providerCancel)
 			defer func() {
@@ -364,6 +364,19 @@ turnLoop:
 
 			al.activeRequests.Add(1)
 			defer al.activeRequests.Done()
+
+			// Use streaming if available and no tool calls expected
+			useStreaming := streamer != nil && len(toolDefsForCall) == 0
+			if sp, ok := activeProvider.(providers.StreamingProvider); ok && useStreaming {
+				onChunk := func(accumulated string) {
+					if err := streamer.Update(providerCtx, accumulated); err != nil {
+						logger.DebugCF("agent", "Streaming update failed", map[string]any{
+							"error": err.Error(),
+						})
+					}
+				}
+				return sp.ChatStream(providerCtx, messagesForCall, toolDefsForCall, llmModel, llmOpts, onChunk)
+			}
 
 			if len(activeCandidates) > 1 && al.fallback != nil {
 				fbResult, fbErr := al.fallback.Execute(
@@ -397,7 +410,12 @@ turnLoop:
 		var err error
 		maxRetries := 2
 		for retry := 0; retry <= maxRetries; retry++ {
-			response, err = callLLM(callMessages, providerToolDefs)
+			// Only stream on first attempt to avoid duplicate content
+			var callStreamer bus.Streamer
+			if retry == 0 {
+				callStreamer = ts.getStreamer()
+			}
+			response, err = callLLM(callMessages, providerToolDefs, callStreamer)
 			if err == nil {
 				break
 			}
@@ -671,6 +689,10 @@ turnLoop:
 				continue
 			}
 			finalContent = responseContent
+			// Finalize streaming if active
+			if ts.getStreamer() != nil && finalContent != "" {
+				ts.finalizeStreamer(turnCtx, finalContent)
+			}
 			logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
 				map[string]any{
 					"agent_id":      ts.agent.ID,
