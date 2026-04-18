@@ -370,6 +370,9 @@ func (c *PicoChannel) BeginStream(ctx context.Context, chatID string) (channels.
 	if !c.IsRunning() {
 		return nil, channels.ErrNotRunning
 	}
+	if !c.config.Streaming {
+		return nil, fmt.Errorf("streaming disabled in config")
+	}
 
 	msgID := uuid.New().String()
 	outMsg := newMessage(TypeMessageCreate, map[string]any{
