@@ -135,17 +135,127 @@ func NewProvider(ctx context.Context, opts ...Option) (*Provider, error) {
 	}, nil
 }
 
-// converseParams holds the shared request parameters for Converse and ConverseStream.
-type converseParams struct {
-	messages       []types.Message
-	system         []types.SystemContentBlock
-	inferenceConfig *types.InferenceConfiguration
-	toolConfig     *types.ToolConfiguration
+// Chat sends messages to AWS Bedrock using the Converse API.
+func (p *Provider) Chat(
+	ctx context.Context,
+	messages []Message,
+	tools []ToolDefinition,
+	model string,
+	options map[string]any,
+) (*LLMResponse, error) {
+	// Apply request timeout if context doesn't already have a deadline.
+	// Use explicit timeout if set, otherwise fall back to common default.
+	effectiveTimeout := p.requestTimeout
+	if effectiveTimeout <= 0 {
+		effectiveTimeout = common.DefaultRequestTimeout
+	}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, effectiveTimeout)
+		defer cancel()
+	}
+
+	// Build the Converse API input
+	input := &bedrockruntime.ConverseInput{
+		ModelId: aws.String(model),
+	}
+
+	// Convert messages to Bedrock format
+	bedrockMessages, systemPrompts := convertMessages(messages)
+	input.Messages = bedrockMessages
+
+	// Set system prompts if any
+	if len(systemPrompts) > 0 {
+		input.System = systemPrompts
+	}
+
+	// Set inference configuration only when options are provided
+	var inferenceConfig *types.InferenceConfiguration
+
+	if maxTokens, ok := common.AsInt(options["max_tokens"]); ok && maxTokens > 0 {
+		if inferenceConfig == nil {
+			inferenceConfig = &types.InferenceConfiguration{}
+		}
+		// Clamp to int32 range to avoid overflow
+		if maxTokens > math.MaxInt32 {
+			maxTokens = math.MaxInt32
+		}
+		inferenceConfig.MaxTokens = aws.Int32(int32(maxTokens))
+	}
+
+	if temp, ok := common.AsFloat(options["temperature"]); ok {
+		if inferenceConfig == nil {
+			inferenceConfig = &types.InferenceConfiguration{}
+		}
+		inferenceConfig.Temperature = aws.Float32(float32(temp))
+	}
+
+	if inferenceConfig != nil {
+		input.InferenceConfig = inferenceConfig
+	}
+
+	// Convert tools to Bedrock format
+	// Only set ToolConfig if at least one valid tool was produced
+	if len(tools) > 0 {
+		toolConfig := convertTools(tools)
+		if len(toolConfig.Tools) > 0 {
+			input.ToolConfig = toolConfig
+		}
+	}
+
+	// Call Bedrock Converse API
+	output, err := p.client.Converse(ctx, input)
+	if err != nil {
+		// Check for SSO token expiration errors and provide actionable guidance
+		if isSSOTokenError(err) {
+			return nil, fmt.Errorf(
+				"bedrock converse: AWS credentials may have expired. If using AWS SSO, run 'aws sso login' to refresh: %w",
+				err,
+			)
+		}
+		return nil, fmt.Errorf("bedrock converse: %w", err)
+	}
+
+	// Parse the response
+	return parseResponse(output)
 }
 
-func buildConverseParams(messages []Message, tools []ToolDefinition, options map[string]any) converseParams {
-	bedrockMessages, systemPrompts := convertMessages(messages)
+// ChatStream sends messages to AWS Bedrock using the ConverseStream API.
+// It streams text deltas via onChunk callback and returns the complete response.
+func (p *Provider) ChatStream(
+	ctx context.Context,
+	messages []Message,
+	tools []ToolDefinition,
+	model string,
+	options map[string]any,
+	onChunk func(accumulated string),
+) (*LLMResponse, error) {
+	// Apply request timeout if context doesn't already have a deadline.
+	effectiveTimeout := p.requestTimeout
+	if effectiveTimeout <= 0 {
+		effectiveTimeout = common.DefaultRequestTimeout
+	}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, effectiveTimeout)
+		defer cancel()
+	}
 
+	// Build the ConverseStream API input
+	input := &bedrockruntime.ConverseStreamInput{
+		ModelId: aws.String(model),
+	}
+
+	// Convert messages to Bedrock format
+	bedrockMessages, systemPrompts := convertMessages(messages)
+	input.Messages = bedrockMessages
+
+	// Set system prompts if any
+	if len(systemPrompts) > 0 {
+		input.System = systemPrompts
+	}
+
+	// Set inference configuration only when options are provided
 	var inferenceConfig *types.InferenceConfiguration
 
 	if maxTokens, ok := common.AsInt(options["max_tokens"]); ok && maxTokens > 0 {
@@ -165,94 +275,19 @@ func buildConverseParams(messages []Message, tools []ToolDefinition, options map
 		inferenceConfig.Temperature = aws.Float32(float32(temp))
 	}
 
-	var toolConfig *types.ToolConfiguration
+	if inferenceConfig != nil {
+		input.InferenceConfig = inferenceConfig
+	}
+
+	// Convert tools to Bedrock format
 	if len(tools) > 0 {
-		tc := convertTools(tools)
-		if len(tc.Tools) > 0 {
-			toolConfig = tc
+		toolConfig := convertTools(tools)
+		if len(toolConfig.Tools) > 0 {
+			input.ToolConfig = toolConfig
 		}
 	}
 
-	return converseParams{
-		messages:       bedrockMessages,
-		system:         systemPrompts,
-		inferenceConfig: inferenceConfig,
-		toolConfig:     toolConfig,
-	}
-}
-
-// Chat sends messages to AWS Bedrock using the Converse API.
-func (p *Provider) Chat(
-	ctx context.Context,
-	messages []Message,
-	tools []ToolDefinition,
-	model string,
-	options map[string]any,
-) (*LLMResponse, error) {
-	effectiveTimeout := p.requestTimeout
-	if effectiveTimeout <= 0 {
-		effectiveTimeout = common.DefaultRequestTimeout
-	}
-	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, effectiveTimeout)
-		defer cancel()
-	}
-
-	params := buildConverseParams(messages, tools, options)
-	input := &bedrockruntime.ConverseInput{
-		ModelId:         aws.String(model),
-		Messages:        params.messages,
-		InferenceConfig: params.inferenceConfig,
-		ToolConfig:      params.toolConfig,
-	}
-	if len(params.system) > 0 {
-		input.System = params.system
-	}
-
-	output, err := p.client.Converse(ctx, input)
-	if err != nil {
-		if isSSOTokenError(err) {
-			return nil, fmt.Errorf(
-				"bedrock converse: AWS credentials may have expired. If using AWS SSO, run 'aws sso login' to refresh: %w",
-				err,
-			)
-		}
-		return nil, fmt.Errorf("bedrock converse: %w", err)
-	}
-
-	return parseResponse(output)
-}
-
-// ChatStream sends messages to AWS Bedrock using the ConverseStream API.
-// It streams the accumulated text so far via the onChunk callback and returns the complete response.
-func (p *Provider) ChatStream(
-	ctx context.Context,
-	messages []Message,
-	tools []ToolDefinition,
-	model string,
-	options map[string]any,
-	onChunk func(accumulated string),
-) (*LLMResponse, error) {
-	if p.requestTimeout > 0 {
-		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, p.requestTimeout)
-			defer cancel()
-		}
-	}
-
-	params := buildConverseParams(messages, tools, options)
-	input := &bedrockruntime.ConverseStreamInput{
-		ModelId:         aws.String(model),
-		Messages:        params.messages,
-		InferenceConfig: params.inferenceConfig,
-		ToolConfig:      params.toolConfig,
-	}
-	if len(params.system) > 0 {
-		input.System = params.system
-	}
-
+	// Call Bedrock ConverseStream API
 	output, err := p.client.ConverseStream(ctx, input)
 	if err != nil {
 		if isSSOTokenError(err) {
@@ -264,38 +299,20 @@ func (p *Provider) ChatStream(
 		return nil, fmt.Errorf("bedrock conversestream: %w", err)
 	}
 
+	// Process the event stream
 	return parseStreamResponse(ctx, output.GetStream(), onChunk)
-}
-
-// converseStreamReader abstracts the Bedrock event stream so parseStreamResponse
-// can be unit-tested with a mock event source.
-type converseStreamReader interface {
-	Events() <-chan types.ConverseStreamOutput
-	Err() error
-	Close() error
 }
 
 // parseStreamResponse processes the ConverseStream event stream and accumulates the response.
 func parseStreamResponse(
 	ctx context.Context,
-	stream converseStreamReader,
+	stream *bedrockruntime.ConverseStreamEventStream,
 	onChunk func(accumulated string),
-) (resp *LLMResponse, err error) {
-	if stream == nil {
-		return nil, fmt.Errorf("bedrock conversestream: nil event stream")
-	}
-	defer func() {
-		if closeErr := stream.Close(); closeErr != nil {
-			if err == nil {
-				err = fmt.Errorf("bedrock conversestream: close event stream: %w", closeErr)
-			} else {
-				log.Printf("bedrock conversestream: close event stream: %v", closeErr)
-			}
-		}
-	}()
+) (*LLMResponse, error) {
+	defer stream.Close()
 
 	var textContent strings.Builder
-	finishReason := "stop"
+	var finishReason string
 	var usage *UsageInfo
 	toolCalls := make([]ToolCall, 0)
 
@@ -348,16 +365,10 @@ func parseStreamResponse(
 				idx := int(aws.ToInt32(e.Value.ContentBlockIndex))
 				if tool, exists := activeTools[idx]; exists {
 					args := make(map[string]any)
-					argsStr := tool.argsJSON.String()
-					if argsStr != "" {
+					if argsStr := tool.argsJSON.String(); argsStr != "" {
 						if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
-							log.Printf("bedrock: stream: failed to parse tool arguments for %q: %v", tool.name, err)
-							args = map[string]any{"raw": argsStr}
+							log.Printf("bedrock stream: failed to parse tool arguments for %q: %v", tool.name, err)
 						}
-					}
-					funcArgs := argsStr
-					if argsJSON, marshalErr := json.Marshal(args); marshalErr == nil {
-						funcArgs = string(argsJSON)
 					}
 					toolCalls = append(toolCalls, ToolCall{
 						ID:        tool.id,
@@ -365,7 +376,7 @@ func parseStreamResponse(
 						Arguments: args,
 						Function: &FunctionCall{
 							Name:      tool.name,
-							Arguments: funcArgs,
+							Arguments: tool.argsJSON.String(),
 						},
 					})
 					delete(activeTools, idx)
@@ -403,7 +414,7 @@ func parseStreamResponse(
 
 done:
 	if err := stream.Err(); err != nil {
-		return nil, fmt.Errorf("bedrock conversestream: %w", err)
+		return nil, fmt.Errorf("bedrock stream error: %w", err)
 	}
 
 	return &LLMResponse{
