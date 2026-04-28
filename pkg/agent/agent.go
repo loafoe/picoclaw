@@ -562,7 +562,7 @@ func (al *AgentLoop) runAgentLoop(
 	ts := newTurnState(agent, opts, turnScope)
 
 	// Acquire streamer if channel supports streaming
-	if al.bus != nil && opts.Dispatch.Channel() != "" {
+	if al.bus != nil && opts.SendResponse && opts.Dispatch.Channel() != "" {
 		if streamer, ok := al.bus.GetStreamer(ctx, opts.Dispatch.Channel(), opts.Dispatch.ChatID()); ok {
 			ts.setStreamer(streamer)
 			logger.DebugCF("agent", "Streaming enabled for turn", map[string]any{
@@ -601,7 +601,7 @@ func (al *AgentLoop) runAgentLoop(
 	}
 
 	// Only publish via bus if not already streamed
-	if opts.SendResponse && result.finalContent != "" && ts.getStreamer() == nil {
+	if opts.SendResponse && result.finalContent != "" && !ts.wasStreamed() {
 		agentID, sessionKey, scope := outboundTurnMetadata(
 			agent.ID,
 			opts.Dispatch.SessionKey,

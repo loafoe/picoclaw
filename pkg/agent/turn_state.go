@@ -239,8 +239,9 @@ type turnState struct {
 	al *AgentLoop
 
 	// Streaming support
-	streamer     bus.Streamer
-	streamerOnce sync.Once
+	streamer          bus.Streamer
+	streamerOnce      sync.Once
+	streamerFinalized bool
 }
 
 // =============================================================================
@@ -833,8 +834,15 @@ func (ts *turnState) finalizeStreamer(ctx context.Context, content string) {
 	ts.streamerOnce.Do(func() {
 		if ts.streamer != nil {
 			_ = ts.streamer.Finalize(ctx, content)
+			ts.streamerFinalized = true
 		}
 	})
+}
+
+func (ts *turnState) wasStreamed() bool {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+	return ts.streamerFinalized
 }
 
 func (ts *turnState) cancelStreamer(ctx context.Context) {
