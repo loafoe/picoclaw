@@ -156,8 +156,8 @@ func (p *Pipeline) CallLLM(
 		al.activeRequests.Add(1)
 		defer al.activeRequests.Done()
 
-		// Use streaming if available and no tool calls expected
-		useStreaming := streamer != nil && len(toolDefsForCall) == 0
+		// Use streaming if available (provider handles tool calls in stream)
+		useStreaming := streamer != nil
 		if sp, ok := exec.activeProvider.(providers.StreamingProvider); ok && useStreaming {
 			onChunk := func(accumulated string) {
 				if err := streamer.Update(providerCtx, accumulated); err != nil {
