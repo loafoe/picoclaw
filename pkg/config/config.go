@@ -545,7 +545,7 @@ type TelegramSettings struct {
 	Token             SecureString    `json:"token,omitzero"       yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
 	BaseURL           string          `json:"base_url"             yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_BASE_URL"`
 	Proxy             string          `json:"proxy"                yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_PROXY"`
-	Streaming         StreamingConfig `json:"streaming,omitzero"   yaml:"-"`
+	Streaming         StreamingConfig `json:"streaming,omitzero"   yaml:"streaming,omitempty"`
 	UseMarkdownV2     bool            `json:"use_markdown_v2"      yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_USE_MARKDOWN_V2"`
 	MediaGroupDelayMS int             `json:"media_group_delay_ms" yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_MEDIA_GROUP_DELAY_MS"`
 }
@@ -648,7 +648,7 @@ type WeComSettings struct {
 	Secret              SecureString    `json:"secret,omitzero"         yaml:"secret,omitempty" env:"SECRET"`
 	WebSocketURL        string          `json:"websocket_url,omitempty" yaml:"-"                env:"WEBSOCKET_URL"`
 	SendThinkingMessage bool            `json:"send_thinking_message"   yaml:"-"                env:"SEND_THINKING_MESSAGE"`
-	Streaming           StreamingConfig `json:"streaming,omitzero"      yaml:"-"`
+	Streaming           StreamingConfig `json:"streaming,omitzero"      yaml:"streaming,omitempty"`
 }
 
 func (c *WeComSettings) SetSecret(secret string) {
@@ -672,7 +672,7 @@ type PicoSettings struct {
 	Token           SecureString    `json:"token,omitzero"              yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_PICO_TOKEN"`
 	AllowTokenQuery bool            `json:"allow_token_query,omitempty" yaml:"-"`
 	AllowOrigins    []string        `json:"allow_origins,omitempty"     yaml:"-"`
-	Streaming       StreamingConfig `json:"streaming,omitzero"          yaml:"-"`
+	Streaming       StreamingConfig `json:"streaming,omitzero"          yaml:"streaming,omitempty"`
 	PingInterval    int             `json:"ping_interval,omitempty"     yaml:"-"`
 	ReadTimeout     int             `json:"read_timeout,omitempty"      yaml:"-"`
 	WriteTimeout    int             `json:"write_timeout,omitempty"     yaml:"-"`
