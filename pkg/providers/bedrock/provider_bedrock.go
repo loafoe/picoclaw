@@ -26,6 +26,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
+	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers/common"
 	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
 )
@@ -158,8 +159,56 @@ func modelDeprecatesTemperature(model string) bool {
 	return strings.Contains(m, "claude-opus-4-8")
 }
 
+// modelSupportsCaching reports whether the given Bedrock model accepts prompt
+// cache points (CachePointBlock) in the Converse request. Inserting a cache
+// point for a model that does not support it returns a ValidationException, so
+// caching is opt-in by model.
+//
+// The match is loose for the same reason as modelDeprecatesTemperature: Bedrock
+// model IDs and inference-profile ARNs embed the model name, so a substring
+// check covers bare IDs and region-prefixed inference profiles alike. The set
+// covers the cache-enabled Claude families on Bedrock (3.5 v2, 3.7, and 4.x).
+func modelSupportsCaching(model string) bool {
+	m := strings.ToLower(model)
+	if !strings.Contains(m, "claude") {
+		return false
+	}
+	switch {
+	case strings.Contains(m, "claude-3-5-sonnet"),
+		strings.Contains(m, "claude-3-5-haiku"),
+		strings.Contains(m, "claude-3-7-sonnet"),
+		strings.Contains(m, "claude-sonnet-4"),
+		strings.Contains(m, "claude-opus-4"),
+		strings.Contains(m, "claude-haiku-4"):
+		return true
+	default:
+		return false
+	}
+}
+
+// cachePointBlock returns the SDK cache-point marker inserted after a cacheable
+// prefix in system, tool, or message content.
+func newCachePointContentBlock() types.ContentBlock {
+	return &types.ContentBlockMemberCachePoint{
+		Value: types.CachePointBlock{Type: types.CachePointTypeDefault},
+	}
+}
+
+func newCachePointSystemBlock() types.SystemContentBlock {
+	return &types.SystemContentBlockMemberCachePoint{
+		Value: types.CachePointBlock{Type: types.CachePointTypeDefault},
+	}
+}
+
+func newCachePointTool() types.Tool {
+	return &types.ToolMemberCachePoint{
+		Value: types.CachePointBlock{Type: types.CachePointTypeDefault},
+	}
+}
+
 func buildConverseParams(messages []Message, tools []ToolDefinition, model string, options map[string]any) converseParams {
-	bedrockMessages, systemPrompts := convertMessages(messages)
+	cacheEnabled := modelSupportsCaching(model)
+	bedrockMessages, systemPrompts := convertMessagesWithCache(messages, cacheEnabled)
 
 	var inferenceConfig *types.InferenceConfiguration
 
@@ -186,7 +235,7 @@ func buildConverseParams(messages []Message, tools []ToolDefinition, model strin
 
 	var toolConfig *types.ToolConfiguration
 	if len(tools) > 0 {
-		tc := convertTools(tools)
+		tc := convertToolsWithCache(tools, cacheEnabled)
 		if len(tc.Tools) > 0 {
 			toolConfig = tc
 		}
@@ -418,7 +467,10 @@ func parseStreamResponse(
 						) + int(
 							aws.ToInt32(e.Value.Usage.OutputTokens),
 						),
+						CacheReadTokens:  int(aws.ToInt32(e.Value.Usage.CacheReadInputTokens)),
+						CacheWriteTokens: int(aws.ToInt32(e.Value.Usage.CacheWriteInputTokens)),
 					}
+					logCacheUsage("conversestream", usage)
 				}
 			}
 		}
@@ -453,6 +505,17 @@ func (p *Provider) Region() string {
 // user message with multiple ToolResultBlock content blocks. This function merges
 // consecutive tool result messages accordingly.
 func convertMessages(messages []Message) ([]types.Message, []types.SystemContentBlock) {
+	return convertMessagesWithCache(messages, false)
+}
+
+// convertMessagesWithCache is convertMessages with optional Bedrock prompt
+// caching. When cacheEnabled is true and a system message carries structured
+// SystemParts, each part is emitted as its own block and a cache point is
+// inserted after the last part marked CacheControl "ephemeral". This caches the
+// stable system prefix while leaving volatile trailing parts (time, session,
+// summary) outside the cached region. The cache point is omitted when no part
+// is ephemeral, so the per-request dynamic context never anchors the cache.
+func convertMessagesWithCache(messages []Message, cacheEnabled bool) ([]types.Message, []types.SystemContentBlock) {
 	var bedrockMessages []types.Message
 	var systemPrompts []types.SystemContentBlock
 
@@ -481,10 +544,30 @@ func convertMessages(messages []Message) ([]types.Message, []types.SystemContent
 
 		switch {
 		case msg.Role == "system":
-			// System messages go to the System field
-			systemPrompts = append(systemPrompts, &types.SystemContentBlockMemberText{
-				Value: msg.Content,
-			})
+			// System messages go to the System field. With caching enabled and
+			// structured SystemParts available, emit each part separately and
+			// place a cache point after the last ephemeral (stable) part so the
+			// static prefix is cached and volatile trailing parts are not.
+			if cacheEnabled && len(msg.SystemParts) > 0 {
+				lastEphemeral := -1
+				for idx, part := range msg.SystemParts {
+					if part.CacheControl != nil && part.CacheControl.Type == "ephemeral" {
+						lastEphemeral = idx
+					}
+				}
+				for idx, part := range msg.SystemParts {
+					systemPrompts = append(systemPrompts, &types.SystemContentBlockMemberText{
+						Value: part.Text,
+					})
+					if idx == lastEphemeral {
+						systemPrompts = append(systemPrompts, newCachePointSystemBlock())
+					}
+				}
+			} else {
+				systemPrompts = append(systemPrompts, &types.SystemContentBlockMemberText{
+					Value: msg.Content,
+				})
+			}
 			i++
 
 		case isToolResult(msg):
@@ -684,6 +767,15 @@ func buildAssistantContent(msg Message) []types.ContentBlock {
 
 // convertTools converts tool definitions to Bedrock format.
 func convertTools(tools []ToolDefinition) *types.ToolConfiguration {
+	return convertToolsWithCache(tools, false)
+}
+
+// convertToolsWithCache is convertTools with optional Bedrock prompt caching.
+// When cacheEnabled is true and at least one tool is produced, a cache point is
+// appended after the tool list. The tool schema is large and identical across
+// turns, so caching it yields the most reliable savings. The point is omitted
+// when no tools are emitted to avoid a ValidationException on an empty config.
+func convertToolsWithCache(tools []ToolDefinition, cacheEnabled bool) *types.ToolConfiguration {
 	bedrockTools := make([]types.Tool, 0, len(tools))
 
 	for _, tool := range tools {
@@ -713,6 +805,10 @@ func convertTools(tools []ToolDefinition) *types.ToolConfiguration {
 				},
 			},
 		})
+	}
+
+	if cacheEnabled && len(bedrockTools) > 0 {
+		bedrockTools = append(bedrockTools, newCachePointTool())
 	}
 
 	return &types.ToolConfiguration{
@@ -794,7 +890,10 @@ func parseResponse(output *bedrockruntime.ConverseOutput) (*LLMResponse, error) 
 			PromptTokens:     int(aws.ToInt32(output.Usage.InputTokens)),
 			CompletionTokens: int(aws.ToInt32(output.Usage.OutputTokens)),
 			TotalTokens:      int(aws.ToInt32(output.Usage.InputTokens)) + int(aws.ToInt32(output.Usage.OutputTokens)),
+			CacheReadTokens:  int(aws.ToInt32(output.Usage.CacheReadInputTokens)),
+			CacheWriteTokens: int(aws.ToInt32(output.Usage.CacheWriteInputTokens)),
 		}
+		logCacheUsage("converse", usage)
 	}
 
 	return &LLMResponse{
@@ -803,6 +902,26 @@ func parseResponse(output *bedrockruntime.ConverseOutput) (*LLMResponse, error) 
 		FinishReason: finishReason,
 		Usage:        usage,
 	}, nil
+}
+
+// logCacheUsage emits a single line summarizing prompt-cache activity for the
+// turn so cache hits/writes are observable in logs. read>0 means the static
+// prefix (system + tools) was served from cache at ~0.1x input price; write>0
+// means it was (re)written this turn at ~1.25x.
+func logCacheUsage(api string, usage *UsageInfo) {
+	if usage == nil {
+		return
+	}
+	// Use the structured logger (not the std log package, whose output is not
+	// captured in deployed builds) so cache activity is visible in pod logs.
+	logger.InfoCF("provider.bedrock", "prompt cache usage", map[string]any{
+		"api":           api,
+		"input_tokens":  usage.PromptTokens,
+		"output_tokens": usage.CompletionTokens,
+		"cache_read":    usage.CacheReadTokens,
+		"cache_write":   usage.CacheWriteTokens,
+		"cache_hit":     usage.CacheReadTokens > 0,
+	})
 }
 
 // isSSOTokenError checks if the error is related to expired or invalid AWS SSO tokens.

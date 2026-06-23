@@ -921,3 +921,256 @@ func TestBuildConverseParams_KeepsTemperatureForSupportedModel(t *testing.T) {
 	require.NotNil(t, params.inferenceConfig.Temperature)
 	assert.InDelta(t, 0.7, float64(*params.inferenceConfig.Temperature), 0.0001)
 }
+
+func TestModelSupportsCaching(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+		want  bool
+	}{
+		{"opus 4.8 inference profile", "us.anthropic.claude-opus-4-8-20260514-v1:0", true},
+		{"opus 4.7", "us.anthropic.claude-opus-4-7-20250101-v1:0", true},
+		{"sonnet 4.6", "us.anthropic.claude-sonnet-4-6", true},
+		{"haiku 4.5", "anthropic.claude-haiku-4-5", true},
+		{"claude 3.7 sonnet", "us.anthropic.claude-3-7-sonnet-20250219-v1:0", true},
+		{"claude 3.5 sonnet v2", "anthropic.claude-3-5-sonnet-20241022-v2:0", true},
+		{"claude 3 sonnet (no cache)", "anthropic.claude-3-sonnet-20240229-v1:0", false},
+		{"non-claude model", "meta.llama3-70b-instruct-v1:0", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, modelSupportsCaching(tt.model))
+		})
+	}
+}
+
+func TestConvertMessagesWithCache_SystemCachePoint(t *testing.T) {
+	messages := []Message{
+		{
+			Role:    "system",
+			Content: "static\n\ndynamic",
+			SystemParts: []protocoltypes.ContentBlock{
+				{Type: "text", Text: "static prefix", CacheControl: &protocoltypes.CacheControl{Type: "ephemeral"}},
+				{Type: "text", Text: "dynamic runtime context"}, // volatile, no cache control
+			},
+		},
+		{Role: "user", Content: "hi"},
+	}
+
+	_, systemPrompts := convertMessagesWithCache(messages, true)
+
+	// Expect: static text, cache point, dynamic text (cache point AFTER the
+	// last ephemeral block, so the dynamic part stays outside the cached prefix).
+	require.Len(t, systemPrompts, 3)
+
+	first, ok := systemPrompts[0].(*types.SystemContentBlockMemberText)
+	require.True(t, ok)
+	assert.Equal(t, "static prefix", first.Value)
+
+	_, ok = systemPrompts[1].(*types.SystemContentBlockMemberCachePoint)
+	require.True(t, ok, "cache point must follow the last ephemeral block")
+
+	third, ok := systemPrompts[2].(*types.SystemContentBlockMemberText)
+	require.True(t, ok)
+	assert.Equal(t, "dynamic runtime context", third.Value)
+}
+
+func TestConvertMessagesWithCache_NoCachePointWhenDisabled(t *testing.T) {
+	messages := []Message{
+		{
+			Role:    "system",
+			Content: "static\n\ndynamic",
+			SystemParts: []protocoltypes.ContentBlock{
+				{Type: "text", Text: "static prefix", CacheControl: &protocoltypes.CacheControl{Type: "ephemeral"}},
+			},
+		},
+	}
+
+	_, systemPrompts := convertMessagesWithCache(messages, false)
+
+	// Caching disabled: single text block from Content, no cache point.
+	require.Len(t, systemPrompts, 1)
+	text, ok := systemPrompts[0].(*types.SystemContentBlockMemberText)
+	require.True(t, ok)
+	assert.Equal(t, "static\n\ndynamic", text.Value)
+}
+
+func TestConvertMessagesWithCache_NoCachePointWithoutEphemeralPart(t *testing.T) {
+	messages := []Message{
+		{
+			Role:    "system",
+			Content: "only dynamic",
+			SystemParts: []protocoltypes.ContentBlock{
+				{Type: "text", Text: "only dynamic"}, // no cache control
+			},
+		},
+	}
+
+	_, systemPrompts := convertMessagesWithCache(messages, true)
+
+	// No ephemeral part -> no cache point (dynamic context must not anchor cache).
+	require.Len(t, systemPrompts, 1)
+	_, ok := systemPrompts[0].(*types.SystemContentBlockMemberText)
+	require.True(t, ok)
+}
+
+func TestConvertToolsWithCache_AppendsCachePoint(t *testing.T) {
+	tools := []ToolDefinition{
+		{
+			Function: protocoltypes.ToolFunctionDefinition{
+				Name:        "get_weather",
+				Description: "Get the current weather",
+			},
+		},
+	}
+
+	toolConfig := convertToolsWithCache(tools, true)
+
+	require.NotNil(t, toolConfig)
+	require.Len(t, toolConfig.Tools, 2) // tool spec + cache point
+
+	_, ok := toolConfig.Tools[0].(*types.ToolMemberToolSpec)
+	require.True(t, ok)
+	_, ok = toolConfig.Tools[1].(*types.ToolMemberCachePoint)
+	require.True(t, ok, "cache point must be appended after the tool list")
+}
+
+func TestConvertToolsWithCache_NoCachePointWhenDisabled(t *testing.T) {
+	tools := []ToolDefinition{
+		{Function: protocoltypes.ToolFunctionDefinition{Name: "get_weather"}},
+	}
+
+	toolConfig := convertToolsWithCache(tools, false)
+
+	require.Len(t, toolConfig.Tools, 1)
+	_, ok := toolConfig.Tools[0].(*types.ToolMemberToolSpec)
+	require.True(t, ok)
+}
+
+func TestConvertToolsWithCache_NoCachePointWhenEmpty(t *testing.T) {
+	// All tools skipped (empty names) -> no tools, so no cache point either.
+	tools := []ToolDefinition{
+		{Function: protocoltypes.ToolFunctionDefinition{Name: ""}},
+	}
+
+	toolConfig := convertToolsWithCache(tools, true)
+
+	assert.Empty(t, toolConfig.Tools)
+}
+
+func TestBuildConverseParams_AddsCachePointsForSupportedModel(t *testing.T) {
+	messages := []Message{
+		{
+			Role:    "system",
+			Content: "static",
+			SystemParts: []protocoltypes.ContentBlock{
+				{Type: "text", Text: "static prefix", CacheControl: &protocoltypes.CacheControl{Type: "ephemeral"}},
+			},
+		},
+		{Role: "user", Content: "hi"},
+	}
+	tools := []ToolDefinition{
+		{Function: protocoltypes.ToolFunctionDefinition{Name: "tool_a"}},
+	}
+
+	params := buildConverseParams(messages, tools, "us.anthropic.claude-sonnet-4-6", nil)
+
+	// System cache point present.
+	var sysCachePoints int
+	for _, b := range params.system {
+		if _, ok := b.(*types.SystemContentBlockMemberCachePoint); ok {
+			sysCachePoints++
+		}
+	}
+	assert.Equal(t, 1, sysCachePoints)
+
+	// Tool cache point present.
+	require.NotNil(t, params.toolConfig)
+	var toolCachePoints int
+	for _, tl := range params.toolConfig.Tools {
+		if _, ok := tl.(*types.ToolMemberCachePoint); ok {
+			toolCachePoints++
+		}
+	}
+	assert.Equal(t, 1, toolCachePoints)
+}
+
+func TestBuildConverseParams_NoCachePointsForUnsupportedModel(t *testing.T) {
+	messages := []Message{
+		{
+			Role:    "system",
+			Content: "static",
+			SystemParts: []protocoltypes.ContentBlock{
+				{Type: "text", Text: "static prefix", CacheControl: &protocoltypes.CacheControl{Type: "ephemeral"}},
+			},
+		},
+	}
+	tools := []ToolDefinition{
+		{Function: protocoltypes.ToolFunctionDefinition{Name: "tool_a"}},
+	}
+
+	params := buildConverseParams(messages, tools, "meta.llama3-70b-instruct-v1:0", nil)
+
+	for _, b := range params.system {
+		_, ok := b.(*types.SystemContentBlockMemberCachePoint)
+		assert.False(t, ok, "no system cache point for unsupported model")
+	}
+	require.NotNil(t, params.toolConfig)
+	for _, tl := range params.toolConfig.Tools {
+		_, ok := tl.(*types.ToolMemberCachePoint)
+		assert.False(t, ok, "no tool cache point for unsupported model")
+	}
+}
+
+func TestParseResponse_CacheUsage(t *testing.T) {
+	output := &bedrockruntime.ConverseOutput{
+		Output: &types.ConverseOutputMemberMessage{
+			Value: types.Message{
+				Content: []types.ContentBlock{
+					&types.ContentBlockMemberText{Value: "hi"},
+				},
+			},
+		},
+		StopReason: types.StopReasonEndTurn,
+		Usage: &types.TokenUsage{
+			InputTokens:           aws.Int32(100),
+			OutputTokens:          aws.Int32(20),
+			CacheReadInputTokens:  aws.Int32(80),
+			CacheWriteInputTokens: aws.Int32(15),
+		},
+	}
+
+	resp, err := parseResponse(output)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.Usage)
+	assert.Equal(t, 80, resp.Usage.CacheReadTokens)
+	assert.Equal(t, 15, resp.Usage.CacheWriteTokens)
+}
+
+func TestParseStreamResponse_CacheUsage(t *testing.T) {
+	events := []types.ConverseStreamOutput{
+		&types.ConverseStreamOutputMemberMessageStop{
+			Value: types.MessageStopEvent{StopReason: types.StopReasonEndTurn},
+		},
+		&types.ConverseStreamOutputMemberMetadata{
+			Value: types.ConverseStreamMetadataEvent{
+				Usage: &types.TokenUsage{
+					InputTokens:           aws.Int32(100),
+					OutputTokens:          aws.Int32(20),
+					CacheReadInputTokens:  aws.Int32(80),
+					CacheWriteInputTokens: aws.Int32(15),
+				},
+			},
+		},
+	}
+
+	stream := newMockStream(events)
+	resp, err := parseStreamResponse(context.Background(), stream, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.Usage)
+	assert.Equal(t, 80, resp.Usage.CacheReadTokens)
+	assert.Equal(t, 15, resp.Usage.CacheWriteTokens)
+}
