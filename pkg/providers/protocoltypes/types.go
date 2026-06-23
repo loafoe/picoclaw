@@ -53,6 +53,13 @@ type UsageInfo struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+
+	// Prompt-cache accounting (provider prefix caching). Zero when the provider
+	// does not cache or the request had no cache activity.
+	//   CacheReadTokens  — input tokens served from cache (~0.1x input price)
+	//   CacheWriteTokens — input tokens written to cache this request (~1.25x)
+	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
 
 // CacheControl marks a content block for LLM-side prefix caching.
