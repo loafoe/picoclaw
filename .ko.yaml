@@ -1,0 +1,10 @@
+# ko base image override.
+#
+# picoclaw's `exec` tool shells out via `sh -c`, so the runtime image needs a
+# shell + core utilities (grep/sed/awk from busybox), jq, and a markdown->PDF
+# toolchain (pandoc + LaTeX). ko's default base (cgr.dev/chainguard/static) is
+# empty and breaks exec, so we override it with our hardened, multi-arch base.
+# That base is now built from a Dockerfile on Alpine (not apko — apko can't run
+# the apk post-install triggers LaTeX needs). Rebuild it with `docker buildx`
+# using innovation-day/picoclaw/Dockerfile.base whenever its package set changes.
+defaultBaseImage: ghcr.io/loafoe/picoclaw-base:latest
